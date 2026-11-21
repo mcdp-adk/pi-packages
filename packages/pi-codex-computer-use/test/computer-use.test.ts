@@ -206,7 +206,7 @@ withRealRuntime('run a cell in the Codex REPL from pi', () => {
     }
   });
 
-  it('criterion 6: REPL session runs a cell with the config untouched and the routing variables deleted', async () => {
+  it('criterion 6: REPL session runs a cell with the config untouched, pipe-routing variables deleted, and configured CODEX_CLI_PATH kept', async () => {
     // The harness parsed the config path without the package's code.
     const real = realCodexInstallation();
     if ('missing' in real) throw new Error(`needs a real Codex runtime: ${real.missing}`);
@@ -214,49 +214,60 @@ withRealRuntime('run a cell in the Codex REPL from pi', () => {
     const before = fs.readFileSync(configPath);
     // Plant bogus values in the TEST process env (the base the host merges the
     // Codex config over): the two pipe-routing variables must be deleted (if
-    // kept, sky tries to connect to a nonexistent pipe and fails), while the
-    // real config's CODEX_CLI_PATH must override the bogus ambient one and
-    // --disable-sandbox keeps the REPL out of codex sandbox so the helper can
-    // launch codex app-server. Both behaviors are observable through list_apps.
-    const planted = {
+    // kept, sky tries to connect to a nonexistent pipe and fails). When the
+    // real config sets CODEX_CLI_PATH, also plant a bogus ambient
+    // CODEX_CLI_PATH and prepend an unusable codex.exe to PATH: the real
+    // config's CODEX_CLI_PATH must override the ambient one (not be deleted to
+    // fall back to PATH), and --disable-sandbox must keep the REPL out of codex
+    // sandbox so the helper can launch codex app-server.
+    const planted: Record<string, string> = {
       SKY_CUA_NATIVE_PIPE: '1',
       SKY_CUA_NATIVE_PIPE_DIRECTORY: '\\\\.\\pipe\\codex-computer-use-bogus-test',
-      CODEX_CLI_PATH: 'C:\\bogus\\codex.exe',
     };
+    if (real.env['CODEX_CLI_PATH']) {
+      const decoyDir = path.join(root, `decoy-codex-path-${Math.random().toString(36).slice(2)}`);
+      fs.mkdirSync(decoyDir, { recursive: true });
+      fs.writeFileSync(path.join(decoyDir, 'codex.exe'), '');
+      planted['CODEX_CLI_PATH'] = 'C:\\bogus\\codex.exe';
+      planted['PATH'] = `${decoyDir}${path.delimiter}${process.env.PATH ?? ''}`;
+    }
     const prevEnv = Object.fromEntries(Object.keys(planted).map((k) => [k, process.env[k]]));
     Object.assign(process.env, planted);
     const expectedTmpDir = path.join(os.tmpdir(), 'pi-codex-repl');
-    const { session } = await createScriptedSession({
-      cwd: root,
-      scripts: [
-        { kind: 'tool', name: 'computer_use', args: { code: "nodeRepl.write(JSON.stringify({ tmpDir: nodeRepl.tmpDir, apps: (await globalThis.sky.list_apps()).slice(0, 1) }));" } },
-        { kind: 'text', text: 'done' },
-      ],
-    });
     try {
-      await session.prompt('go');
-      const results = toolResults(session);
-      assert.ok(!results[0]?.isError, `cell failed: ${toolContentTexts(results[0])}`);
-      const observed = lastJsonObject(toolContentTexts(results[0]));
-      // Temp directory pointed at the host's writable tmp dir (observable).
-      // The cell always writes tmpDir, so a non-string here fails the
-      // comparison below instead of throwing out of path.resolve.
-      const tmpDir: unknown = observed['tmpDir'];
-      assert.equal(
-        typeof tmpDir === 'string' ? path.resolve(tmpDir) : tmpDir,
-        path.resolve(expectedTmpDir),
-        `cell observed tmpDir ${String(observed['tmpDir'])}, expected the host tmp dir ${expectedTmpDir}`,
-      );
-      // Pipe-routing variables deleted and config CODEX_CLI_PATH applied:
-      // with either the bogus pipe kept or the bogus cli path winning, the
-      // call fails — success is the observable witness.
-      assert.ok(
-        Array.isArray(observed['apps']) && observed['apps'].length > 0,
-        'list_apps under planted bogus routing variables returned no apps',
-      );
+      const { session } = await createScriptedSession({
+        cwd: root,
+        scripts: [
+          { kind: 'tool', name: 'computer_use', args: { code: "nodeRepl.write(JSON.stringify({ tmpDir: nodeRepl.tmpDir, apps: (await globalThis.sky.list_apps()).slice(0, 1) }));" } },
+          { kind: 'text', text: 'done' },
+        ],
+      });
+      try {
+        await session.prompt('go');
+        const results = toolResults(session);
+        assert.ok(!results[0]?.isError, `cell failed: ${toolContentTexts(results[0])}`);
+        const observed = lastJsonObject(toolContentTexts(results[0]));
+        // Temp directory pointed at the host's writable tmp dir (observable).
+        // The cell always writes tmpDir, so a non-string here fails the
+        // comparison below instead of throwing out of path.resolve.
+        const tmpDir: unknown = observed['tmpDir'];
+        assert.equal(
+          typeof tmpDir === 'string' ? path.resolve(tmpDir) : tmpDir,
+          path.resolve(expectedTmpDir),
+          `cell observed tmpDir ${String(observed['tmpDir'])}, expected the host tmp dir ${expectedTmpDir}`,
+        );
+        // Pipe-routing variables deleted, config CODEX_CLI_PATH kept (not
+        // falling back to the decoy codex.exe on PATH), and --disable-sandbox
+        // active: if any of those breaks, list_apps fails.
+        assert.ok(
+          Array.isArray(observed['apps']) && observed['apps'].length > 0,
+          'list_apps under planted bogus env returned no apps',
+        );
+      } finally {
+        await session.extensionRunner.emit({ type: 'session_shutdown', reason: 'quit' });
+        session.dispose();
+      }
     } finally {
-      await session.extensionRunner.emit({ type: 'session_shutdown', reason: 'quit' });
-      session.dispose();
       for (const [k, v] of Object.entries(prevEnv)) {
         if (v === undefined) delete process.env[k]; else process.env[k] = v;
       }
