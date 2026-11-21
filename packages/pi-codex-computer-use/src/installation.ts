@@ -1,0 +1,262 @@
+// One module locates the Codex installation. One lookup reads Codex's
+// configuration (CODEX_HOME env or ~/.codex/config.toml) ONCE and answers
+// with the REPL's command, Codex's configured environment for it, and the
+// paths of the Codex guidance, the confirmation policy, and the sky API
+// reference — or the list of what is missing, each piece named. It reports
+// facts about Codex's files only; how the REPL is launched stays with the
+// host (ADR 0002).
+// Host-logic file: must never import anything from pi.
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { parse as parseToml } from 'smol-toml';
+
+// The sky API reference sits next to the REPL module, under @oai/sky/docs in
+// one of the node_modules directories the REPL resolves packages from.
+const SKY_DOC = path.join('@oai', 'sky', 'docs', 'sky-window2-api.md');
+// The Codex guidance and the confirmation policy ship in the bundled
+// computer-use plugin, whose marketplace the config records.
+const PLUGIN_DOCS = path.join('plugins', 'computer-use', 'docs');
+// The trusted service the cells import sky through (NODE_REPL_TRUSTED_SERVICES).
+const SKY_SERVICE = 'sky';
+
+// Parsed TOML and JSON arrive as unknown and are narrowed before use, so a
+// renamed key is a type error rather than a silent `undefined`. The check
+// mirrors the old `typeof x === 'object'` guards, arrays included.
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+// Narrow a parsed value to the object it must be. A wrong-shaped file or
+// variable is reported as malformed — naming it — never as a downstream
+// missing piece. Arrays pass isRecord above but are never the mapping shape
+// a config or manifest needs.
+function asRecord(value: unknown, what: string): Record<string, unknown> {
+  if (!isRecord(value) || Array.isArray(value)) {
+    throw new Error(`${what} is malformed (expected an object)`);
+  }
+  return value;
+}
+
+// The node_repl server entry's known fields, narrowed once at the parse
+// boundary so a misspelt field is a type error.
+interface NodeReplEntry {
+  command?: unknown;
+  env?: unknown;
+}
+
+// Codex's configuration file: CODEX_HOME env or ~/.codex/config.toml.
+function configPath(): string {
+  const home = process.env.CODEX_HOME ?? path.join(os.homedir(), '.codex');
+  return path.join(home, 'config.toml');
+}
+
+// A complete installation: the REPL's launch command, Codex's configured
+// environment for it, and the three located documents.
+export interface InstallationFound {
+  ok: true;
+  command: string;
+  env: Record<string, string>;
+  guidancePath: string;
+  confirmationPolicyPath: string;
+  skyReferencePath: string;
+}
+
+// An incomplete installation: exactly what is missing, each piece named.
+export interface InstallationMissing {
+  ok: false;
+  missing: string[];
+}
+
+// Locate the Codex installation. Returns
+// { ok: true, command, env, guidancePath, confirmationPolicyPath, skyReferencePath }
+// or { ok: false, missing } naming exactly what is missing. Config problems
+// and a missing REPL command are reported alone; the module, document, and
+// plugin checks only run once a launchable command exists, so their failures
+// join one list.
+export function locateInstallation(): InstallationFound | InstallationMissing {
+  const file = configPath();
+  if (!fs.existsSync(file)) return { ok: false, missing: ['Codex config file (config.toml)'] };
+  let doc: unknown;
+  try {
+    doc = parseToml(fs.readFileSync(file, 'utf8'));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, missing: [`Codex config file could not be parsed (${message})`] };
+  }
+  const servers: unknown = isRecord(doc) ? doc['mcp_servers'] : undefined;
+  if (servers !== undefined && (!isRecord(servers) || Array.isArray(servers))) {
+    return { ok: false, missing: ['Codex config file is malformed ([mcp_servers] should be a table)'] };
+  }
+  const nodeRepl: unknown = isRecord(servers) ? servers['node_repl'] : undefined;
+  if (nodeRepl !== undefined && (!isRecord(nodeRepl) || Array.isArray(nodeRepl))) {
+    return { ok: false, missing: ['Codex config file is malformed ([mcp_servers.node_repl] should be a table)'] };
+  }
+  const entry: NodeReplEntry = isRecord(nodeRepl) ? { command: nodeRepl['command'], env: nodeRepl['env'] } : {};
+  const command: unknown = entry.command;
+  if (!command) return { ok: false, missing: ['[mcp_servers.node_repl] command in Codex config'] };
+  if (typeof command !== 'string' || !fs.existsSync(command)) {
+    return { ok: false, missing: [`node_repl command (${String(command)} not found). If Codex updated, open the Codex desktop app to refresh config.toml, then start a new pi session.`] };
+  }
+
+  const envValue: unknown = entry.env;
+  if (envValue !== undefined && (!isRecord(envValue) || Array.isArray(envValue))) {
+    return { ok: false, missing: ['Codex config file is malformed ([mcp_servers.node_repl] env should be a table)'] };
+  }
+  const env: Record<string, string> = isRecord(envValue)
+    ? Object.fromEntries(Object.entries(envValue).map(([k, v]) => [k, String(v)]))
+    : {};
+
+  const missing: string[] = [];
+  // The sky module: the check the sky init cell depends on, run at lookup
+  // time — before any tool exists to run it — so a missing service entry or
+  // package is named instead of failing deep inside a cell.
+  try {
+    checkSkyModule(env);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    missing.push(`sky module (${message})`);
+  }
+  const skyReferencePath = skyModuleRoots(env)
+    .map((root) => path.join(root, SKY_DOC))
+    .find((p) => fs.existsSync(p)) ?? null;
+  if (!skyReferencePath) missing.push('sky API reference (@oai/sky/docs/sky-window2-api.md next to the REPL)');
+  const guidancePath = pluginDocPath('guidance.md', doc);
+  if (!guidancePath) missing.push('Codex guidance (bundled computer-use plugin docs/guidance.md)');
+  const confirmationPolicyPath = pluginDocPath('confirmations.md', doc);
+  if (!confirmationPolicyPath) missing.push('confirmation policy (bundled computer-use plugin docs/confirmations.md)');
+
+  if (missing.length) return { ok: false, missing };
+  // Every null path pushes its message above, so past this point all three
+  // are strings. The check below is that invariant in a form the compiler
+  // follows; it fires only with an empty missing list, which cannot happen.
+  if (!skyReferencePath || !guidancePath || !confirmationPolicyPath) return { ok: false, missing };
+  return {
+    ok: true,
+    command,
+    env,
+    guidancePath,
+    confirmationPolicyPath,
+    skyReferencePath,
+  };
+}
+
+// The sky module check: the @oai/sky package exists under one of the module
+// directories the REPL resolves packages from, and the entry its manifest's
+// `main` or `exports` names is on disk — a manifest-only shell (a half-copied
+// install) is incomplete. The ONE place this is checked. Throws naming what
+// is missing.
+function checkSkyModule(env: Record<string, string>): void {
+  const packageName = skyPackageSpecifier(env);
+  for (const root of skyModuleRoots(env)) {
+    const dir = path.join(root, packageName);
+    const manifestPath = path.join(dir, 'package.json');
+    if (!fs.existsSync(manifestPath)) continue;
+    let pkg: unknown;
+    try {
+      pkg = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as unknown;
+    } catch {
+      throw new Error(`Cannot resolve ${SKY_SERVICE}: ${packageName}'s package.json is not valid JSON`);
+    }
+    pkg = asRecord(pkg, `Cannot resolve ${SKY_SERVICE}: ${packageName}'s package.json`);
+    let entryFile: string;
+    try {
+      entryFile = manifestEntryPath(pkg);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`Cannot resolve ${SKY_SERVICE}: ${packageName}'s package.json names no usable entry (${message})`);
+    }
+    if (!fs.existsSync(path.join(dir, entryFile))) {
+      throw new Error(`Cannot resolve ${SKY_SERVICE}: ${packageName}'s entry file ${entryFile} is missing`);
+    }
+    return;
+  }
+  throw new Error(`Cannot resolve ${SKY_SERVICE}: package ${packageName} not found under NODE_REPL_NODE_MODULE_DIRS`);
+}
+
+// The specifier cells import (e.g. "@oai/sky"), from NODE_REPL_TRUSTED_SERVICES
+// (JSON mapping service name -> module specifier, "sky" -> "@oai/sky/service");
+// the package name is the specifier up to the package boundary.
+function skyPackageSpecifier(env: Record<string, string>): string {
+  let services: unknown;
+  try {
+    services = JSON.parse(env?.NODE_REPL_TRUSTED_SERVICES ?? '{}') as unknown;
+  } catch {
+    throw new Error(`Cannot resolve ${SKY_SERVICE}: NODE_REPL_TRUSTED_SERVICES is not valid JSON`);
+  }
+  const table = asRecord(services, `Cannot resolve ${SKY_SERVICE}: NODE_REPL_TRUSTED_SERVICES`);
+  const specifier: unknown = table[SKY_SERVICE];
+  if (specifier === undefined || specifier === '') {
+    throw new Error(`Cannot resolve ${SKY_SERVICE}: not listed in NODE_REPL_TRUSTED_SERVICES`);
+  }
+  if (typeof specifier !== 'string') {
+    throw new Error(`Cannot resolve ${SKY_SERVICE}: NODE_REPL_TRUSTED_SERVICES is malformed ("${SKY_SERVICE}" should be a module specifier string)`);
+  }
+  return specifier.startsWith('@')
+    ? specifier.split('/').slice(0, 2).join('/')
+    : specifier.split('/')[0];
+}
+
+// All node_modules roots the REPL can resolve packages from, from the config
+// env's NODE_REPL_NODE_MODULE_DIRS (a node_modules dir or a delimiter-
+// separated list of them; a parent of one is accepted).
+function skyModuleRoots(env: Record<string, string>): string[] {
+  return (env?.NODE_REPL_NODE_MODULE_DIRS ?? '')
+    .split(path.delimiter)
+    .filter(Boolean)
+    .map((d) => (path.basename(d) === 'node_modules' ? d : path.join(d, 'node_modules')));
+}
+
+// The on-disk entry path a package's manifest names: the bare `main` first,
+// then the `.` export's value (a string, or the `default` of a conditional
+// map) — or, when there is no `.` key, the bare `exports` string itself.
+// The export's leading `./` matches the manifest's own paths.
+function manifestEntryPath(pkg: unknown): string {
+  const record: Record<string, unknown> | null = isRecord(pkg) ? pkg : null;
+  const main: unknown = record?.['main'];
+  if (typeof main === 'string') return main;
+  const exportsValue: unknown = record?.['exports'];
+  const dot: unknown = isRecord(exportsValue) ? exportsValue['.'] : undefined;
+  const exp: unknown = dot ?? exportsValue;
+  if (typeof exp === 'string') return exp;
+  if (isRecord(dot)) {
+    const dflt: unknown = dot['default'] ?? Object.values(dot).find((v) => typeof v === 'string');
+    if (typeof dflt === 'string') return dflt;
+  }
+  throw new Error('no main and no "." export');
+}
+
+// A plugin document (guidance.md, confirmations.md) under the bundled
+// computer-use plugin of the marketplaces recorded in the parsed config.
+function pluginDocPath(name: string, doc: unknown): string | null {
+  for (const root of marketplaceRoots(doc)) {
+    const p = path.join(root, PLUGIN_DOCS, name);
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
+// Marketplace and other package-source roots recorded in the parsed config
+// (e.g. the bundled marketplace the computer-use plugin ships in).
+// `[marketplaces.<name>] source = ...` (the real config's shape) and a bare
+// `[marketplace] source = ...` are both accepted.
+function marketplaceRoots(doc: unknown): string[] {
+  const candidates: unknown[] = isRecord(doc) ? [doc['marketplaces'], doc['marketplace']] : [];
+  const tables: Record<string, unknown>[] = candidates.filter(
+    (t: unknown): t is Record<string, unknown> => isRecord(t),
+  );
+  return tables
+    .flatMap((t) => (t['source'] !== undefined ? [t] : Object.values(t)))
+    .map((e: unknown) => {
+      const source: unknown = isRecord(e) ? e['source'] : undefined;
+      return typeof source === 'string' ? stripExtendedPrefix(source) : null;
+    })
+    .filter((s: string | null): s is string => Boolean(s));
+}
+
+// Windows writes the extended-length prefix \\?\ in front of long paths
+// recorded in the config; strip it so the path opens normally.
+const EXTENDED_PREFIX = String.fromCharCode(92, 92, 63, 92); // \\?\
+function stripExtendedPrefix(p: string): string {
+  return p.startsWith(EXTENDED_PREFIX) ? p.slice(EXTENDED_PREFIX.length) : p;
+}

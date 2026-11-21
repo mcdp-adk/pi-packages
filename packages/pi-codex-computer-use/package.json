@@ -1,0 +1,45 @@
+{
+  "name": "@mcdp-adk/pi-codex-computer-use",
+  "version": "0.1.4",
+  "description": "pi extension: run cells in the Codex REPL to drive Windows desktop apps",
+  "keywords": [
+    "pi-package"
+  ],
+  "type": "module",
+  "main": "src/extension.ts",
+  "pi": {
+    "extensions": [
+      "src/extension.ts"
+    ],
+    "skills": [
+      "skills/codex-computer-use"
+    ]
+  },
+  "files": [
+    "src",
+    "skills"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "test": "node test/run.ts"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "dependencies": {
+    "@earendil-works/pi-mcp": "^1.1.0",
+    "smol-toml": "^1.9.1"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mcdp-adk/pi-packages.git",
+    "directory": "packages/pi-codex-computer-use"
+  }
+}
