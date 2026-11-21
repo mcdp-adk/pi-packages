@@ -1,0 +1,29 @@
+{
+  "name": "pi-packages",
+  "private": true,
+  "description": "Public pi packages published under the @mcdp-adk scope.",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "prepare": "git config core.hooksPath .githooks || exit 0",
+    "lint": "tsc -p . && knip && node scripts/check-source.ts",
+    "test": "npm test --workspaces"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^19.8.1",
+    "@commitlint/config-conventional": "^19.8.1",
+    "@commitlint/types": "^19.8.1",
+    "@earendil-works/pi-ai": "^1.2.0",
+    "@earendil-works/pi-coding-agent": "^1.1.0",
+    "@types/node": "^22.19.0",
+    "knip": "^6.41.0",
+    "typebox": "1.3.27",
+    "typescript": "^7.0.2"
+  },
+  "license": "MIT"
+}

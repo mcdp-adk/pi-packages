@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "strict": true,
+    "noEmit": true,
+    // Every source file in the workspace is checked; pi's shipped .d.ts files
+    // are not ours to fix (e.g. their JSON imports need attributes nodenext
+    // demands of them, not of us).
+    "skipLibCheck": true,
+    "erasableSyntaxOnly": true,
+    "allowImportingTsExtensions": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true
+  },
+  "include": [
+    "packages/*/src",
+    "packages/*/test",
+    "scripts",
+    "commitlint.config.ts"
+  ]
+}
