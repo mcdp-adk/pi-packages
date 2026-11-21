@@ -41,7 +41,9 @@ Verified against the Codex runtime `cua_node/cfb32733c877621e` and the bundled `
 ## Launch environment
 
 - The REPL needs `NODE_REPL_TRUSTED_CODE_PATHS` from Codex's configuration to trust `@oai/sky/service`; without it, sky fails with "Trusted RPC package must resolve within a configured trusted module directory". *probe*
-- The three app-routing variables reach sky if the host passes them on: pointed at a missing pipe, they make sky calls fail. ADR 0002 names the variables and the `CODEX_CLI_PATH` failure. *probe; the host stripping them is under test: computer-use, criterion 6*
+- `SKY_CUA_NATIVE_PIPE` and `SKY_CUA_NATIVE_PIPE_DIRECTORY` route sky to the running Codex app's named pipe; pointed at a missing pipe, they make sky calls fail. *source (`@oai/sky` `computer_use_client.js`); probe; the host stripping them is under test: computer-use, criterion 6*
+- `codex-computer-use.exe` launches `codex app-server` using `CODEX_CLI_PATH` (falling back to `codex` on `PATH` when unset). Without `CODEX_CLI_PATH` and with no `codex` on `PATH`, sky calls fail with `"failed to launch codex app-server: program not found"`. *source (`codex-computer-use.exe` `src\policy\auth.rs`); probe; the host keeping `CODEX_CLI_PATH` instead of falling back to `PATH` is under test: computer-use, criterion 6*
+- The REPL executable (`node_repl.exe`) also reads `CODEX_CLI_PATH`: without `--disable-sandbox`, it wraps its Node processes in `codex.exe sandbox`, under which the helper's `codex app-server` child fails with `"codex app-server exited before returning response 1"`. Passing `--disable-sandbox` starts those Node processes directly while keeping `CODEX_CLI_PATH` for the helper. *source (`node_repl.exe --help`); probe (`OpenAI.Codex` `26.1117.4957.0`); test: every real-runtime sky test*
 
 ## Abort and Escape
 

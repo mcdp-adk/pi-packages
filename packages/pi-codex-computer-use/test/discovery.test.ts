@@ -332,8 +332,9 @@ describe('completeness discovery: tools only exist when the Codex installation i
   withRealRuntime('against the real home: computer_use runs and carries turn metadata', () => {
     it('valid home through a package session: computer_use runs against the real runtime and carries turn metadata', async () => {
       // The runtime resolves @oai/sky/service only from a trusted module
-      // directory, which the real config names via NODE_REPL_TRUSTED_CODE_PATHS;
-      // a migrated home carries the real env, so copy it too.
+      // directory, which the real config names via NODE_REPL_TRUSTED_CODE_PATHS,
+      // and the helper launches codex app-server via CODEX_CLI_PATH; a
+      // migrated home carries the real env, so copy both too.
       const real = realCodexInstallation();
       if ('missing' in real) throw new Error(`needs a real Codex runtime: ${real.missing}`);
       const cwdHome = fakeCodexHome('valid', { replEntry: true, marketplace: true });
@@ -341,10 +342,13 @@ describe('completeness discovery: tools only exist when the Codex installation i
       const nm = String(real.env['NODE_REPL_NODE_MODULE_DIRS']).replace(/'/g, String.fromCharCode(92) + String.fromCharCode(39));
       const command = String(real.command).replace(/'/g, String.fromCharCode(92) + String.fromCharCode(39));
       const tcp = String(real.env['NODE_REPL_TRUSTED_CODE_PATHS']).replace(/'/g, String.fromCharCode(92) + String.fromCharCode(39));
+      const cliLine = real.env['CODEX_CLI_PATH']
+        ? `\nCODEX_CLI_PATH = '${String(real.env['CODEX_CLI_PATH']).replace(/'/g, String.fromCharCode(92) + String.fromCharCode(39))}'`
+        : '';
       const cfgToml = fs.readFileSync(path.join(cwdHome, 'config.toml'), 'utf8');
       fs.writeFileSync(path.join(cwdHome, 'config.toml'), cfgToml
         .replace(/command = '.*'/, `command = '${command}'`)
-        .replace(/NODE_REPL_NODE_MODULE_DIRS = '.*'/, `NODE_REPL_NODE_MODULE_DIRS = '${nm}'\nNODE_REPL_TRUSTED_CODE_PATHS = '${tcp}'`));
+        .replace(/NODE_REPL_NODE_MODULE_DIRS = '.*'/, `NODE_REPL_NODE_MODULE_DIRS = '${nm}'\nNODE_REPL_TRUSTED_CODE_PATHS = '${tcp}'${cliLine}`));
       process.env.CODEX_HOME = cwdHome;
       const cwd = makeTempRoot('pi-cua-test-3-ok');
       try {
