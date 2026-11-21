@@ -67,6 +67,7 @@ withRealRuntime('run a cell in the Codex REPL from pi', () => {
       await session.prompt('list the running apps');
       const results = toolResults(session);
       assert.equal(results.length, 1, `expected 1 toolResult, got ${results.length}`);
+      assert.ok(!results[0].isError, `list-apps cell failed: ${toolContentTexts(results[0]).slice(0, 200)}`);
       const text = toolContentTexts(results[0]);
       assert.ok(text.length > 0, 'tool result text empty');
       assert.ok(
@@ -211,12 +212,12 @@ withRealRuntime('run a cell in the Codex REPL from pi', () => {
     if ('missing' in real) throw new Error(`needs a real Codex runtime: ${real.missing}`);
     const configPath = real.file;
     const before = fs.readFileSync(configPath);
-    // Plant the three app-routing variables with deliberately bogus values in
-    // the TEST process env (the base the host merges the Codex config over).
-    // If the host kept them, the cell would route through a pipe directory
-    // that no process ever created and the call would fail (probed: with the
-    // variables kept, sky never initialises and list_apps errors out).
-    // Their deletion is therefore observable from inside a cell, behaviorally.
+    // Plant bogus values in the TEST process env (the base the host merges the
+    // Codex config over): the two pipe-routing variables must be deleted (if
+    // kept, sky tries to connect to a nonexistent pipe and fails), while the
+    // real config's CODEX_CLI_PATH must override the bogus ambient one and
+    // --disable-sandbox keeps the REPL out of codex sandbox so the helper can
+    // launch codex app-server. Both behaviors are observable through list_apps.
     const planted = {
       SKY_CUA_NATIVE_PIPE: '1',
       SKY_CUA_NATIVE_PIPE_DIRECTORY: '\\\\.\\pipe\\codex-computer-use-bogus-test',
@@ -246,8 +247,9 @@ withRealRuntime('run a cell in the Codex REPL from pi', () => {
         path.resolve(expectedTmpDir),
         `cell observed tmpDir ${String(observed['tmpDir'])}, expected the host tmp dir ${expectedTmpDir}`,
       );
-      // Routing variables deleted: with them kept (bogus pipe, bogus cli path)
-      // the call fails — success is the observable witness of their deletion.
+      // Pipe-routing variables deleted and config CODEX_CLI_PATH applied:
+      // with either the bogus pipe kept or the bogus cli path winning, the
+      // call fails — success is the observable witness.
       assert.ok(
         Array.isArray(observed['apps']) && observed['apps'].length > 0,
         'list_apps under planted bogus routing variables returned no apps',
