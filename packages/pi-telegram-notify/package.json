@@ -1,0 +1,36 @@
+{
+  "name": "@mcdp-adk/pi-telegram-notify",
+  "version": "0.2.1",
+  "description": "Pi package that sends a Telegram message when pi finishes, fails, or waits for you",
+  "keywords": [
+    "pi-package"
+  ],
+  "type": "module",
+  "main": "src/extension.ts",
+  "pi": {
+    "extensions": [
+      "src/extension.ts"
+    ]
+  },
+  "files": [
+    "src"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "test": "node test/run.ts"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mcdp-adk/pi-packages.git",
+    "directory": "packages/pi-telegram-notify"
+  }
+}
