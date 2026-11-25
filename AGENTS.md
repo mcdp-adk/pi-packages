@@ -20,6 +20,10 @@ Multi-context: root `GLOSSARY-MAP.md` and `docs/adr/`, plus per-package `package
 
 Each publishable package lives in `packages/<pkg>/`. Before changing a package, also read its `AGENTS.md` if it has one.
 
+## Publishing
+
+How a package reaches npm. See `docs/publishing.md`.
+
 ## Workspace
 
 - **Worktrees**: set up each new worktree with `npm ci`.
